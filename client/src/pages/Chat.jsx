@@ -23,20 +23,65 @@ function Chat() {
     if (!text.trim()) return;
 
     const userMsg = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    // Add user message and an empty AI message to be streamed into
+    setMessages((prev) => [...prev, userMsg, { role: "ai", content: "" }]);
     setInput("");
     setLoading(true);
 
     try {
-      const res = await API.post("/chat", { message: text });
-      const aiMsg = { role: "ai", content: res.data.answer };
-      setMessages((prev) => [...prev, aiMsg]);
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000/api"}/chat/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ message: text })
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split("\n");
+        
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.error) {
+                setMessages(prev => {
+                  const newMsgs = [...prev];
+                  newMsgs[newMsgs.length - 1] = { ...newMsgs[newMsgs.length - 1], content: data.error };
+                  return newMsgs;
+                });
+              } else if (data.type === "text") {
+                setMessages(prev => {
+                  const newMsgs = [...prev];
+                  newMsgs[newMsgs.length - 1] = { 
+                    ...newMsgs[newMsgs.length - 1], 
+                    content: newMsgs[newMsgs.length - 1].content + data.text 
+                  };
+                  return newMsgs;
+                });
+              }
+            } catch (e) {
+              // ignore partial JSON from chunks that break exactly on a newline
+            }
+          }
+        }
+      }
     } catch (err) {
-      const errorMsg = {
-        role: "ai",
-        content: err.response?.data?.message || "Sorry, I couldn't process that. Please try again.",
-      };
-      setMessages((prev) => [...prev, errorMsg]);
+      setMessages((prev) => {
+        const newMsgs = [...prev];
+        newMsgs[newMsgs.length - 1] = { ...newMsgs[newMsgs.length - 1], content: "Sorry, I couldn't process that. Please try again." };
+        return newMsgs;
+      });
     } finally {
       setLoading(false);
     }

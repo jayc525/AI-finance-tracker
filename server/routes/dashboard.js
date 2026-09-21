@@ -3,13 +3,14 @@ const mongoose = require("mongoose");
 const Expense = require("../models/Expense");
 const auth = require("../middleware/auth");
 const { getAnomalies } = require("../services/anomaly");
+const { cacheMiddleware } = require("../middleware/cacheMiddleware");
 
 const router = express.Router();
 
 router.use(auth);
 
 // GET /api/dashboard/category-totals
-router.get("/category-totals", async (req, res) => {
+router.get("/category-totals", cacheMiddleware(300), async (req, res) => {
   try {
     const { startDate, endDate, category } = req.query;
 
@@ -40,7 +41,7 @@ router.get("/category-totals", async (req, res) => {
 });
 
 // GET /api/dashboard/monthly-trends
-router.get("/monthly-trends", async (req, res) => {
+router.get("/monthly-trends", cacheMiddleware(300), async (req, res) => {
   try {
     const { startDate, endDate, category } = req.query;
 
@@ -76,7 +77,7 @@ router.get("/monthly-trends", async (req, res) => {
 });
 
 // GET /api/dashboard/anomalies
-router.get("/anomalies", async (req, res) => {
+router.get("/anomalies", cacheMiddleware(300), async (req, res) => {
   try {
     const anomalies = await getAnomalies(req.userId);
     res.json(anomalies);

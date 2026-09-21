@@ -15,6 +15,25 @@ function getAI() {
   return ai;
 }
 
+// retry wrapper for transient 503 errors
+async function withRetry(fn, retries = 3, delayMs = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err?.status || err?.response?.status || err?.error?.code;
+      const isRetryable = status === 503 || status === 429;
+      if (isRetryable && i < retries - 1) {
+        console.log(`Gemini API returned ${status}, retrying in ${delayMs}ms... (attempt ${i + 2}/${retries})`);
+        await new Promise((r) => setTimeout(r, delayMs));
+        delayMs *= 2; // exponential backoff
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 // resolve relative dates like "yesterday", "last monday" etc.
 function resolveRelativeDate(dateStr) {
   if (!dateStr) return new Date().toISOString();
@@ -59,7 +78,7 @@ Only return the JSON object, nothing else.`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const response = await genai.models.generateContent({
+    const response = await withRetry(() => genai.models.generateContent({
       model: "gemini-3.6-flash",
       contents: prompt,
       config: {
@@ -75,7 +94,7 @@ Only return the JSON object, nothing else.`;
           required: ["amount", "category", "date"],
         },
       },
-    });
+    }));
 
     clearTimeout(timeout);
 
@@ -124,13 +143,13 @@ Example output:
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const response = await genai.models.generateContent({
+    const response = await withRetry(() => genai.models.generateContent({
       model: "gemini-3.6-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
       },
-    });
+    }));
 
     clearTimeout(timeout);
 
@@ -156,10 +175,10 @@ If the data is empty, say you couldn't find any matching expenses.
 Keep it brief - 1-2 sentences max.`;
 
   try {
-    const response = await genai.models.generateContent({
+    const response = await withRetry(() => genai.models.generateContent({
       model: "gemini-3.6-flash",
       contents: prompt,
-    });
+    }));
 
     return response.text;
   } catch (err) {
@@ -168,4 +187,29 @@ Keep it brief - 1-2 sentences max.`;
   }
 }
 
-module.exports = { parseExpense, questionToQuery, generateAnswer };
+// generate a natural language answer from query results as a stream
+async function generateAnswerStream(question, queryResult) {
+  const genai = getAI();
+
+  const prompt = `The user asked: "${question}"
+
+Here is the data from their expense database:
+${JSON.stringify(queryResult)}
+
+Please give a short, friendly, natural language answer. Use ₹ for currency.
+If the data is empty, say you couldn't find any matching expenses.
+Keep it brief - 1-2 sentences max.`;
+
+  try {
+    const responseStream = await withRetry(() => genai.models.generateContentStream({
+      model: "gemini-3.6-flash",
+      contents: prompt,
+    }));
+    return responseStream;
+  } catch (err) {
+    console.error("Gemini answer stream error:", err.message);
+    return null;
+  }
+}
+
+module.exports = { parseExpense, questionToQuery, generateAnswer, generateAnswerStream };

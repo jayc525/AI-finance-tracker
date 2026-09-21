@@ -4,6 +4,7 @@ const auth = require("../middleware/auth");
 const { createExpenseSchema, parsedExpenseSchema } = require("../validators/expense");
 const { parseExpense } = require("../services/gemini");
 const { detectAnomalies } = require("../services/anomaly");
+const { cacheMiddleware, clearUserCache } = require("../middleware/cacheMiddleware");
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ const router = express.Router();
 router.use(auth);
 
 // GET /api/expenses - list user's expenses
-router.get("/", async (req, res) => {
+router.get("/", cacheMiddleware(300), async (req, res) => {
   try {
     const { startDate, endDate, category } = req.query;
 
@@ -59,6 +60,9 @@ router.post("/", async (req, res) => {
     detectAnomalies(req.userId).catch((err) =>
       console.error("Anomaly detection error:", err)
     );
+
+    // clear user cache
+    clearUserCache(req.userId);
 
     res.status(201).json(expense);
   } catch (err) {
@@ -108,6 +112,8 @@ router.post("/parse", async (req, res) => {
       console.error("Anomaly detection error:", err)
     );
 
+    clearUserCache(req.userId);
+
     res.status(201).json(expense);
   } catch (err) {
     console.error("Parse expense error:", err);
@@ -142,6 +148,7 @@ router.put("/:id", async (req, res) => {
     expense.date = new Date(result.data.date);
 
     await expense.save();
+    clearUserCache(req.userId);
     res.json(expense);
   } catch (err) {
     console.error("Update expense error:", err);
@@ -163,6 +170,7 @@ router.delete("/:id", async (req, res) => {
     }
 
     await expense.deleteOne();
+    clearUserCache(req.userId);
     res.json({ message: "Expense deleted" });
   } catch (err) {
     console.error("Delete expense error:", err);

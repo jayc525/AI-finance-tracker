@@ -2,7 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const Expense = require("../models/Expense");
 const auth = require("../middleware/auth");
-const { questionToQuery, generateAnswer } = require("../services/gemini");
+const { questionToQuery, generateAnswer, generateAnswerStream } = require("../services/gemini");
 
 const router = express.Router();
 
@@ -107,5 +107,66 @@ router.post("/", async (req, res) => {
     res.status(500).json({ message: "Something went wrong. Please try again." });
   }
 });
+// POST /api/chat/stream
+router.post("/stream", async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message || !message.trim()) {
+      return res.status(400).json({ message: "Message is required" });
+    }
 
+    // Set headers for SSE
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // 1. translate question
+    const pipeline = await questionToQuery(message, req.userId);
+    if (!pipeline) {
+      res.write(`data: ${JSON.stringify({ error: "I couldn't understand that question. Try rephrasing it." })}\n\n`);
+      return res.end();
+    }
+
+    // 2. sanitize
+    const safePipeline = sanitizePipeline(pipeline, req.userId);
+    if (!safePipeline || safePipeline.length === 0) {
+      res.write(`data: ${JSON.stringify({ error: "I couldn't generate a valid query. Try a simpler question." })}\n\n`);
+      return res.end();
+    }
+
+    // 3. run query
+    let queryResult;
+    try {
+      queryResult = await Expense.aggregate(safePipeline);
+    } catch (queryErr) {
+      console.error("Query execution error:", queryErr.message);
+      res.write(`data: ${JSON.stringify({ error: "The query failed to execute. Try rephrasing your question." })}\n\n`);
+      return res.end();
+    }
+
+    // Send the data first so UI can use it
+    res.write(`data: ${JSON.stringify({ type: "data", data: queryResult })}\n\n`);
+
+    // 4. Generate stream
+    const stream = await generateAnswerStream(message, queryResult);
+    if (!stream) {
+      res.write(`data: ${JSON.stringify({ error: "Couldn't generate an answer." })}\n\n`);
+      return res.end();
+    }
+
+    // 5. Pipe stream to client
+    for await (const chunk of stream) {
+      if (chunk.text) {
+        res.write(`data: ${JSON.stringify({ type: "text", text: chunk.text })}\n\n`);
+      }
+    }
+    
+    res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+    res.end();
+  } catch (err) {
+    console.error("Chat stream error:", err);
+    res.write(`data: ${JSON.stringify({ error: "Something went wrong." })}\n\n`);
+    res.end();
+  }
+});
 module.exports = router;

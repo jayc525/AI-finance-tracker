@@ -16,11 +16,11 @@ services:
     container_name: finance_server
     ports:
       - "5000:5000"
+    env_file:
+      - ./server/.env
     environment:
       - PORT=5000
       - MONGO_URI=mongodb://mongodb:27017/finance-tracker
-      - JWT_SECRET=development_secret_do_not_use_in_prod
-      - GEMINI_API_KEY=your_gemini_api_key_here
     volumes:
       - ./server:/app
       - /app/node_modules
